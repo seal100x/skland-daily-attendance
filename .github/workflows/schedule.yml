@@ -2,7 +2,7 @@ name: attendance
 
 on:
   schedule:
-    - cron: '55 15,5 * * *'
+    - cron: '55 20,5 * * *'
   workflow_dispatch:
 
 jobs:

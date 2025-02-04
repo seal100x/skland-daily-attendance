@@ -1,41 +1,46 @@
-import CryptoJSW from '@originjs/crypto-js-wasm'
+import { webcrypto } from 'node:crypto'
+import * as mima from 'mima-kit'
+
+const crypto = webcrypto
 
 export async function md5(string: string) {
-  await CryptoJSW.MD5.loadWasm()
-  return CryptoJSW.MD5(string).toString()
+  return mima.md5(mima.UTF8(string)).to(mima.HEX)
 }
 
 export async function hmacSha256(key: string, data: string) {
-  await CryptoJSW.HmacSHA256.loadWasm()
-  return CryptoJSW.HmacSHA256(data, key).toString()
+  const hmac256 = mima.hmac(mima.sha256)
+  return hmac256(mima.UTF8(key), mima.UTF8(data)).to(mima.HEX)
 }
 
 /**
  * AES CBC 加密
  */
 export async function encryptAES(message: string, key: string) {
-  await CryptoJSW.AES.loadWasm()
-  const iv = '0102030405060708'
+  const iv = new TextEncoder().encode('0102030405060708')
 
-  // 确保输入数据是 WordArray 类型并进行手动填充
-  let data = CryptoJSW.enc.Utf8.parse(message)
-  // 添加一个 \x00 字节
-  data = data.concat(CryptoJSW.enc.Utf8.parse('\x00'))
-  // 补齐到 16 字节的倍数
-  while (data.sigBytes % 16 !== 0)
-    data = data.concat(CryptoJSW.enc.Utf8.parse('\x00'))
+  const data = new TextEncoder().encode(message)
 
-  const encrypted = CryptoJSW.AES.encrypt(
-    data,
-    CryptoJSW.enc.Utf8.parse(key),
-    {
-      iv: CryptoJSW.enc.Utf8.parse(iv),
-      mode: CryptoJSW.mode.CBC,
-      padding: CryptoJSW.pad.NoPadding,
-    },
+  // 导入密钥
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(key),
+    { name: 'AES-CBC' },
+    false,
+    ['encrypt'],
   )
 
-  return encrypted.ciphertext.toString()
+  // 加密
+  const encrypted = await crypto.subtle.encrypt(
+    {
+      name: 'AES-CBC',
+      iv,
+    },
+    cryptoKey,
+    data,
+  )
+
+  // 转换为十六进制字符串
+  return mima.HEX(new Uint8Array(encrypted))
 }
 
 function padData(data: string): string {
@@ -48,24 +53,14 @@ function padData(data: string): string {
  * DES ECB 加密
  */
 export async function encryptDES(message: string | number, key: string) {
-  await CryptoJSW.TripleDES.loadWasm()
-  // 将输入转换为字符串
   const inputStr = padData(String(message))
+  // @ts-expect-error 3DES 64 位密钥长度
+  const TripleDES = mima.t_des(64)
 
-  // 创建 key
-  const keyWordArray = CryptoJSW.enc.Utf8.parse(key!)
+  const ECBTripleDES = mima.ecb(TripleDES, mima.NO_PAD)
+  const cipher = ECBTripleDES(mima.UTF8(key))
 
-  // 创建输入数据
-  const dataWordArray = CryptoJSW.enc.Utf8.parse(inputStr)
-
-  // 使用 TripleDES 加密 (ECB 模式)
-  const encrypted = CryptoJSW.TripleDES.encrypt(dataWordArray, keyWordArray, {
-    mode: CryptoJSW.mode.ECB,
-    padding: CryptoJSW.pad.NoPadding,
-  })
-
-  // 转换为 base64
-  return encrypted.toString()
+  return cipher.encrypt(mima.UTF8(inputStr)).to(mima.B64)
 }
 
 export interface DESRule {
@@ -94,20 +89,68 @@ export async function encryptObjectByDESRules(object: Record<string, string | nu
   return result
 }
 
+/**
+ * 从PEM格式的公钥中提取RSA参数的n和e (BigInt形式)
+ */
+export async function extractJWKFromPEM(publicKeyPEM: string) {
+  // 移除PEM头尾和换行，并进行base64解码
+  const pemContents = publicKeyPEM
+    .replace('-----BEGIN PUBLIC KEY-----', '')
+    .replace('-----END PUBLIC KEY-----', '')
+    .replace(/\s/g, '')
+
+  const binaryDer = atob(pemContents)
+  const derBuffer = new Uint8Array(binaryDer.length)
+  for (let i = 0; i < binaryDer.length; i++) {
+    derBuffer[i] = binaryDer.charCodeAt(i)
+  }
+
+  // 使用 Web Crypto API 导入密钥
+  const cryptoKey = await crypto.subtle.importKey(
+    'spki',
+    derBuffer,
+    {
+      name: 'RSA-OAEP',
+      hash: 'SHA-256',
+    },
+    true,
+    ['encrypt'],
+  )
+
+  // 导出为JWK格式
+  const jwk = await crypto.subtle.exportKey('jwk', cryptoKey)
+
+  return {
+    n: base64URLToBigInt(jwk.n!),
+    e: base64URLToBigInt(jwk.e!),
+  }
+}
+
+export function base64URLToBigInt(base64url: string): bigint {
+  // 1. Base64URL 转 Base64
+  const base64 = base64url
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+    .padEnd(Math.ceil(base64url.length / 4) * 4, '=')
+
+  // 2. Base64 解码为二进制字符串
+  const binaryStr = atob(base64)
+
+  // 3. 转换为 BigInt
+  let result = 0n
+  for (let i = 0; i < binaryStr.length; i++) {
+    result = (result << 8n) | BigInt(binaryStr.charCodeAt(i))
+  }
+
+  return result
+}
+
 export async function encryptRSA(message: string, publicKey: string) {
+  const { n, e } = await extractJWKFromPEM(publicKey)
+  const key = mima.rsa({ n, e })
+  const cliper = mima.pkcs1_es_1_5(key)
 
-  await CryptoJSW.RSA.loadWasm()
+  const encrypted = cliper.encrypt(mima.UTF8(message)).to(mima.B64)
 
-  const formatPublickey = publicKey.match(/.{1,64}/g)?.join('\n') || ''
-  const pk = `-----BEGIN PUBLIC KEY-----\n${formatPublickey}\n-----END PUBLIC KEY-----`
-
-  const encrypted = CryptoJSW.RSA.encrypt(message, {
-    encryptPadding: 'PKCS1V15',
-    key: pk,
-    isPublicKey: true,
-  })
- 
-  if (!encrypted)
-    throw new Error('RSA encryption failed')
-  return btoa(String.fromCharCode(...encrypted))
+  return encrypted
 }

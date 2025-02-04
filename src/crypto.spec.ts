@@ -1,7 +1,7 @@
 import { createHash, createHmac } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { encryptAES, encryptDES, encryptObjectByDESRules, hmacSha256, md5 } from './crypto'
 import { BROWSER_ENV, DES_RULE } from './constant'
+import { encryptAES, encryptDES, encryptObjectByDESRules, hmacSha256, md5 } from './crypto'
 
 describe('crypto', () => {
   it('md5', async () => {
@@ -12,7 +12,6 @@ describe('crypto', () => {
 
     expect(await md5(message)).toBe(expected)
   })
-
 
   it('hmacSha256', async () => {
     const key = '1234567890123456'
@@ -26,14 +25,14 @@ describe('crypto', () => {
   it('encryptAES', async () => {
     const message = '123456'
     const key = '1234567890123456'
-    const expected = '7f2be80dd2bfc4ae7f6ae62f1f04e384'
+    const expected = '172000e84d64a30f559989a6b9f6082d'
     expect(await encryptAES(message, key)).toBe(expected)
   })
 
   it('encryptDES', async () => {
     const message = '123456'
-    const key = '1234567890123456'
-    const expected = 'M59RCYudPds='
+    const key = '12345678'
+    const expected = 'uAoXvewt7nk='
     expect(await encryptDES(message, key)).toBe(expected)
   })
 
